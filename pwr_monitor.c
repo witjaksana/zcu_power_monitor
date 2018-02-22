@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <time.h>
 
 #include "i2c-dev.h"
 
@@ -32,7 +33,8 @@
      //logging & printing variables
      //logging every 1/10 second
 #define LOG_PERIOD_US 100000
-     //updating screen every second: 10 x log_period
+
+//updating screen every second: 10 x log_period
 #define PRINT_PERIOD_FACTOR 10
 
      //logging flag for rails
@@ -55,15 +57,17 @@
 #define REG_ID      0xFE
 #define REG_DIE     0xFF
 
-     static volatile int stop = 0;
+#define printf(...) 
 
-     struct voltage_rail {
-         char *name;
-         unsigned char device;
-         double average_current;
-         double average_power;
-         unsigned char log;
-     };
+static volatile int stop = 0;
+
+struct voltage_rail {
+    char *name;
+    unsigned char device;
+    double average_current;
+    double average_power;
+    unsigned char log;
+};
 
 // Full Power Domain
 struct voltage_rail zcu102_fp_rails[]={
@@ -201,6 +205,18 @@ name	: "mgtavtt          ",
     },
 };
 
+int delay_exceeded(struct timespec start, struct timespec end, unsigned long ms_delay)
+{
+    unsigned long sec_delay = ms_delay / 1000;
+    unsigned long ns_delay = (ms_delay - (sec_delay * 1000)) * 1000000;
+
+    if(end.tv_sec - start.tv_sec == sec_delay) {
+        return ((unsigned long)end.tv_nsec - (unsigned long)start.tv_nsec) > ns_delay;
+    } else {
+        return end.tv_sec - start.tv_sec > sec_delay;
+    }
+}
+
 //interruption handler
 void intHandler(int dummy) {
     printf("got ctrl-c, terminating loop\n");
@@ -319,6 +335,9 @@ int main(int argc, char *argv[]) {
 
     double maxpower = 0.0f;
 
+    /** Time measure */
+    struct timespec start, end;
+
     //opening log file
     logfile = fopen(LOGFILE,"w");
     if(logfile < 0)
@@ -350,26 +369,27 @@ int main(int argc, char *argv[]) {
     initCalibRail(fdi2c, zcu102_fp_rails, loop_fp); // init full power rails
     initCalibRail(fdi2c, zcu102_lp_rails, loop_lp); // init low power rails
     initCalibRail(fdi2c_pl, zcu102_pl_rails, loop_pl); // init logic power rails
-
+        
+    for(i = 0; i < loop_fp; i++) {
+        zcu102_fp_rails[i].average_power = 0;
+        zcu102_fp_rails[i].average_current=0;
+    } 
+    for(i = 0; i < loop_lp; i++) {
+        zcu102_lp_rails[i].average_power = 0;
+        zcu102_lp_rails[i].average_current=0;
+    } 
+    for(i = 0; i < loop_pl; i++) {
+        zcu102_pl_rails[i].average_power = 0;
+        zcu102_pl_rails[i].average_current=0;
+    }
     h = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
     while((stop == 0) && (h < iter_nb)){
         totalPower = 0.0f;
         fp_power = 0.0f;
         lp_power = 0.0f;
         pl_power = 0.0f;
         power = 0.0f;
-        for(i = 0; i < loop_fp; i++) {
-            zcu102_fp_rails[i].average_power = 0;
-            zcu102_fp_rails[i].average_current=0;
-        } 
-        for(i = 0; i < loop_lp; i++) {
-            zcu102_lp_rails[i].average_power = 0;
-            zcu102_lp_rails[i].average_current=0;
-        } 
-        for(i = 0; i < loop_pl; i++) {
-            zcu102_pl_rails[i].average_power = 0;
-            zcu102_pl_rails[i].average_current=0;
-        } 
         if(h%PRINT_PERIOD_FACTOR == 0){
             printf("\033[?1049h\033[H");
             printf("+-------------------------------------------------------------------------------+\n");
@@ -461,8 +481,14 @@ int main(int argc, char *argv[]) {
             printf("+-----------------------------------------------+-------------------------------+\n");
         }
 
-        fflush(stdout);
-        usleep(LOG_PERIOD_US);
+        //fflush(stdout);
+        //usleep(LOG_PERIOD_US);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        while(!delay_exceeded(start,end,100)) 
+        {
+            clock_gettime(CLOCK_MONOTONIC, &end);
+        }
+        start = end;
         h++;
     }
 
