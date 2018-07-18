@@ -57,6 +57,7 @@
 #define REG_ID      0xFE
 #define REG_DIE     0xFF
 
+// comment if you want to hide the result from the terminal
 #define printf(...) 
 
 static volatile int stop = 0;
